@@ -139,6 +139,48 @@ bag to override at all.
   named `server_args`), and a factory whose contract is "build X from the record
   you are handed" (`create_kt_config_from_server_args`, `DllmConfig.from_server_args`).
 
+### Four ways a config sweep breaks something no test runs
+
+Each of these shipped in a review round and cost a real defect; each now has a
+guard, named here so the next sweep checks the same four things by hand first.
+
+1. **The other implementations of an interface.** Dropping a parameter means
+   auditing implementers, not just callers: `CustomSpecAlgo` is the plugin
+   base for speculative algorithms, and the dispatch calls it with the
+   built-in's argument list. Nothing in the tree implements it, so only a
+   plugin user hits the `TypeError`.
+   Guard: `test_plugin_hook_signatures.py`.
+2. **Publish order inside a process entry, not per file.** A file containing a
+   `publish` says nothing about whether a given read runs before it. Spawned
+   workers (`MMEncoder` for encoder DP/TP, the Ray scheduler actor) start with
+   an empty context, so a bag read above the publish raises only there.
+   Guard: `test_publish_precedes_bag_reads.py`.
+3. **The role namespace a process publishes under.** `ROLE_NAMESPACE_SETS`
+   narrows what each role may read; the DP controller is audited for `exec`
+   alone. A helper that reaches for another namespace passes every default-mode
+   test and aborts startup under `SGLANG_ROLE_NAMESPACES=enforce`. Prefer
+   answering from the caller's own namespaces over widening the set.
+4. **Sibling surfaces of a readback.** Changing what one entry point reports
+   means enumerating the others: HTTP, gRPC and in-process `Engine` each have
+   their own server-info and model-info, and each passes its own tests while
+   its users lose the field.
+   Guard: `test_effective_state_surfaces.py`.
+
+A fifth, from the same rounds: the accessor **name itself**. Called as an
+object member (`manager.get_disagg()`), or shadowed by a same-named import
+(`from model_loader import get_model` next to the model bag, where the later
+import silently wins and the loader call gets a zero-argument bag), it imports
+fine and fails only when that path runs. The invariant is one line: the name
+means the process-wide bag, takes no arguments, and is bound once per module.
+Guard: `test_bag_accessors_are_module_level.py`.
+
+Write these guards over a **derived** set, never a hand-kept list: an entry
+naming a function that no longer exists, or a field list missing the one field
+nobody migrated, passes green forever. Both happened here -- a `_ENTRY_POINTS`
+row for a method the Ray actor does not have, and an effective-field set
+without `load_format` -- and both were invisible because the assertion had
+slack (`>= len(...) - 1`) or compared key names instead of value sources.
+
 ### `get_parallel()`: config leaves vs live topology
 
 Config leaves (`nccl_port`, `enable_dp_attention`, `dp_size`, `ep_size`,
