@@ -747,6 +747,13 @@ async def model_info():
         "weight_version": _global_state.tokenizer_manager.config_value(
             "weight_version"
         ),
+        "load_format": _global_state.tokenizer_manager.config_value("load_format"),
+        "reasoning_parser": _global_state.tokenizer_manager.config_value(
+            "reasoning_parser"
+        ),
+        "tool_call_parser": _global_state.tokenizer_manager.config_value(
+            "tool_call_parser"
+        ),
         "has_image_understanding": model_config.is_image_understandable_model,
         "has_audio_understanding": model_config.is_audio_understandable_model,
         "model_type": getattr(model_config.hf_config, "model_type", None),
@@ -796,9 +803,7 @@ async def server_info():
     # server_args.model_config is not serializable but should be excluded by asdict.
     return msgspec_to_builtins(
         {
-            **_global_state.tokenizer_manager.resolved_config_dict(
-                dataclasses.asdict(server_args)
-            ),
+            **dataclasses.asdict(server_args),
             **_global_state.scheduler_info,
             "startup_time": _global_state.tokenizer_manager.startup_time,
             "internal_states": internal_states,

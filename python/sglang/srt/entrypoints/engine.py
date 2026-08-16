@@ -1365,15 +1365,32 @@ class Engine(EngineScoreMixin, EngineBase):
         )
         return msgspec_to_builtins(
             {
-                **self.tokenizer_manager.resolved_config_dict(
-                    dataclasses.asdict(self.tokenizer_manager.server_args)
-                ),
+                **dataclasses.asdict(self.tokenizer_manager.server_args),
                 **self._scheduler_init_result.scheduler_infos[0],
                 "startup_time": self.tokenizer_manager.startup_time,
                 "internal_states": internal_states,
                 "version": __version__,
             }
         )
+
+    def get_model_info(self):
+        """What this engine is serving right now.
+
+        `get_server_info` answers with the record -- what was asked for at
+        launch. A weight update changes the model path and the parsers resolve
+        against the chat template, so an in-process caller needs the same
+        effective view the HTTP and gRPC servers expose.
+        """
+        tm = self.tokenizer_manager
+        return {
+            "model_path": tm.model_path,
+            "served_model_name": tm.served_model_name,
+            "is_generation": tm.is_generation,
+            "weight_version": tm.config_value("weight_version"),
+            "load_format": tm.config_value("load_format"),
+            "reasoning_parser": tm.config_value("reasoning_parser"),
+            "tool_call_parser": tm.config_value("tool_call_parser"),
+        }
 
     def init_weights_update_group(
         self,

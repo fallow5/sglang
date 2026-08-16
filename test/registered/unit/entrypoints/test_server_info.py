@@ -29,6 +29,7 @@ from types import SimpleNamespace
 from sglang.srt.entrypoints import http_server
 from sglang.srt.lora.lora_registry import LoRARef
 from sglang.srt.managers.tokenizer_manager import TokenizerManager
+from sglang.srt.runtime_context import get_context, publish, reset_context
 from sglang.srt.server_args import ServerArgs
 from sglang.test.ci.ci_register import register_cpu_ci
 from sglang.test.test_utils import CustomTestCase
@@ -58,9 +59,6 @@ def _call_server_info_with(
     tokenizer_manager.model_path = server_args.model_path
     tokenizer_manager.served_model_name = server_args.served_model_name
     tokenizer_manager.startup_time = None
-    tokenizer_manager._config_updates = (
-        [("test", dict(config_updates))] if config_updates else []
-    )
     tokenizer_manager.get_internal_state = _fake_internal_state
     stub_state = SimpleNamespace(
         tokenizer_manager=tokenizer_manager,
@@ -68,11 +66,20 @@ def _call_server_info_with(
     )
     prior_state = http_server.get_global_state()
     http_server.set_global_state(stub_state)
+    published = False
+    if config_updates:
+        # A real control-plane update, so the assertion below is about what
+        # the endpoint does with one rather than about a stand-in attribute.
+        publish(server_args, role="tokenizer")
+        published = True
+        get_context().override("test", **config_updates)
     try:
         return asyncio.run(http_server.server_info())
     finally:
         # Restore so a later test in the same process isn't surprised.
         http_server._global_state = prior_state
+        if published:
+            reset_context()
 
 
 class TestServerInfoKvEventsField(CustomTestCase):
@@ -243,14 +250,18 @@ class TestServerInfoKvEventsField(CustomTestCase):
 
 
 class TestServerInfoControlPlaneUpdates(CustomTestCase):
-    """Runtime control-plane updates live on the manager, not on ServerArgs."""
+    """/server_info answers what was asked for, not what is in effect."""
 
-    def test_recorded_updates_win_over_the_startup_config(self):
+    def test_the_readback_reports_the_record_not_the_control_plane(self):
+        # The endpoint is the record's readback: a runtime weight-version
+        # change belongs to /get_weight_version and /model_info, which read
+        # the control-plane log. Overlaying it here would make the one
+        # endpoint that reports the user's input report something else.
         server_args = ServerArgs(model_path="dummy", weight_version="v1")
         payload = _call_server_info_with(
             server_args, config_updates={"weight_version": "v2"}
         )
-        self.assertEqual(payload["weight_version"], "v2")
+        self.assertEqual(payload["weight_version"], "v1")
         self.assertEqual(server_args.weight_version, "v1")
 
 
